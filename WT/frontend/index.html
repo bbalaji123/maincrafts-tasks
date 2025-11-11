@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>E-Learning Portal</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <div class="brand">
+          <div class="logo">EL</div>
+          <div>
+            <div style="font-weight:700">E-Learning Portal</div>
+            <div style="font-size:13px;color:var(--muted)">Browse courses by subject & difficulty</div>
+          </div>
+        </div>
+
+        <div class="searchbar">
+          <input id="global-search" placeholder="Search courses, topics..." style="width:100%;padding:10px;border-radius:10px;border:1px solid rgba(15,23,42,0.06)" />
+          <div id="suggestions" class="suggestions" style="display:none"></div>
+        </div>
+
+        <div class="controls">
+          <div class="filter-panel" id="filter-panel"></div>
+          <div id="auth-area" style="display:flex;align-items:center;gap:8px;margin-left:12px">
+            <div id="user-info" style="display:none;align-items:center;gap:10px">
+              <span id="user-name" style="font-weight:700;color:var(--accent-2)"></span>
+              <button class="btn secondary" id="logout-btn">Logout</button>
+            </div>
+            <div id="auth-links" style="display:flex;gap:8px;align-items:center">
+              <a class="btn secondary" href="login.html">Login</a>
+              <a class="btn" href="register.html">Register</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="app-root">
+        <!-- React app mounts here -->
+      </div>
+
+      <div id="courses-grid" class="grid" style="margin-top:16px"></div>
+    </div>
+
+    <!-- React + Babel (development) -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6.26.0/babel.min.js"></script>
+
+    <!-- Vanilla JS search/filter/autosuggest functions -->
+    <script>
+    // Will be filled later; used to perform DOM manipulation search/filter for demonstration
+    window.simpleFilter = function(keyword, subject, difficulty){
+      const cards = document.querySelectorAll('.course-card');
+      const q = (keyword||'').toLowerCase().trim();
+      cards.forEach(card => {
+        const title = card.dataset.title.toLowerCase();
+        const desc = card.dataset.desc.toLowerCase();
+        const s = card.dataset.subject;
+        const d = card.dataset.difficulty;
+        let visible = true;
+        if (q){ visible = title.includes(q) || desc.includes(q); }
+        if (subject && subject!=='All') visible = visible && (s===subject);
+        if (difficulty && difficulty!=='All') visible = visible && (d===difficulty);
+        card.style.display = visible? 'flex' : 'none';
+      });
+    }
+
+  // autosuggest helper (vanilla)
+    function updateSuggestions(courses, inputEl, suggEl){
+      const val = inputEl.value.trim().toLowerCase();
+      if (!val){ suggEl.style.display='none'; return; }
+      const matches = courses.filter(c=> c.title.toLowerCase().includes(val) || (c.description||'').toLowerCase().includes(val));
+      if (!matches.length){ suggEl.style.display='none'; return; }
+      suggEl.innerHTML = matches.slice(0,8).map(m => `<div class="suggest-item" data-id="${m._id}">${m.title} <small style=\"color:var(--muted)\">(${m.subject})</small></div>`).join('');
+      suggEl.style.display='block';
+      suggEl.querySelectorAll('.suggest-item').forEach(it=>{
+        it.addEventListener('click', ()=>{
+          inputEl.value = it.textContent.trim();
+          suggEl.style.display='none';
+          // trigger React filter if available
+          if (window.appApi && typeof window.appApi.setSearch === 'function') window.appApi.setSearch(inputEl.value);
+          // also run vanilla filter
+          window.simpleFilter(inputEl.value);
+        });
+      });
+    }
+
+    // --- auth display wiring ---
+    function showUser(user){
+      if (user){
+        document.getElementById('user-name').textContent = user.name || user.email;
+        document.getElementById('user-info').style.display = 'flex';
+        document.getElementById('auth-links').style.display = 'none';
+      } else {
+        document.getElementById('user-info').style.display = 'none';
+        document.getElementById('auth-links').style.display = 'flex';
+      }
+    }
+
+    function logout(){
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      showUser(null);
+      // reload to refresh any UI state
+      location.reload();
+    }
+
+    document.addEventListener('DOMContentLoaded', ()=>{
+      const user = localStorage.getItem('user');
+      if (user){ showUser(JSON.parse(user)); }
+      document.getElementById('logout-btn').addEventListener('click', logout);
+    });
+    </script>
+
+    <!-- React app source -->
+    <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function CourseCard({course, onDownload}){
+      return (
+        <div className="course-card" data-title={course.title} data-desc={course.description||''} data-subject={course.subject} data-difficulty={course.difficulty}>
+              <div className="course-top">
+                <div>
+                  <div className="course-title">{course.title}</div>
+                  <div className="meta">{course.subject} • {course.difficulty}</div>
+                  <div className="meta" style={{marginTop:6}}><strong style={{color:'var(--accent-2)'}}>{course.instructor || 'Staff'}</strong> • <span style={{color:'var(--muted)'}}>{course.duration || ''}</span></div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div className="badge">{course.downloads || 0} downloads</div>
+                  {course.rating ? <div style={{marginTop:8,color:'var(--accent-2)',fontWeight:700}}>{course.rating} ★</div> : null}
+                </div>
+              </div>
+              <div className="course-desc">{course.description}</div>
+          <div className="res-list">
+            {course.resources && course.resources.length? course.resources.map((r, idx)=> (
+              <div key={idx} className="res-item">
+                <div style={{fontSize:13}}>{r.title} <small style={{color:'var(--muted)'}}>({r.type})</small></div>
+                <div>
+                  <button className="download-btn" onClick={() => onDownload(course, r)}>Download</button>
+                </div>
+              </div>
+            )) : <div style={{color:'var(--muted)'}}>No resources</div>}
+          </div>
+          {course.tags && course.tags.length? (
+            <div style={{marginTop:12,display:'flex',gap:8,flexWrap:'wrap'}}>
+              {course.tags.map((t, i)=> <div key={i} className="chip" style={{padding:'6px 10px',fontSize:12}}>{t}</div>)}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
+    function FilterPanel({subjects,difficulties,filters,setFilters}){
+      return (
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+          <select value={filters.subject} onChange={e=>setFilters({...filters,subject:e.target.value})}>
+            <option value="All">All Subjects</option>
+            {subjects.map(s=> <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={filters.difficulty} onChange={e=>setFilters({...filters,difficulty:e.target.value})}>
+            <option value="All">All Difficulties</option>
+            {difficulties.map(d=> <option key={d} value={d}>{d}</option>)}
+          </select>
+          <button className="chip" onClick={()=>{setFilters({subject:'All',difficulty:'All'}); document.getElementById('global-search').value=''; window.simpleFilter('');}}>Reset</button>
+        </div>
+      )
+    }
+
+    function Dashboard(){
+      const [courses, setCourses] = useState([]);
+      const [filtered, setFiltered] = useState([]);
+      const [filters, setFilters] = useState({subject:'All', difficulty:'All', q:''});
+
+      useEffect(()=>{ fetchCourses(); }, []);
+
+      useEffect(()=>{ // apply filters
+        let arr = [...courses];
+        if (filters.q){ const q = filters.q.toLowerCase(); arr = arr.filter(c=> c.title.toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q)); }
+        if (filters.subject && filters.subject!=='All') arr = arr.filter(c=> c.subject===filters.subject);
+        if (filters.difficulty && filters.difficulty!=='All') arr = arr.filter(c=> c.difficulty===filters.difficulty);
+        setFiltered(arr);
+        // also make vanilla filter available
+        window.simpleFilter(filters.q, filters.subject, filters.difficulty);
+      }, [filters, courses]);
+
+      async function fetchCourses(){
+        try{
+          const res = await fetch('http://localhost:4000/api/courses');
+          const data = await res.json();
+          setCourses(data);
+          setFiltered(data);
+          // init suggestions behavior
+          const sEl = document.getElementById('suggestions');
+          const inp = document.getElementById('global-search');
+          inp.addEventListener('input', ()=> updateSuggestions(data, inp, sEl));
+          inp.addEventListener('keydown', (ev)=>{ if(ev.key==='Enter') setFilters(f=>({...f,q:inp.value})); });
+        }catch(e){ console.error(e); }
+      }
+
+      // expose small api for vanilla parts
+      window.appApi = { setSearch: (q)=> setFilters(f=>({...f,q})) };
+
+      const subjects = Array.from(new Set(courses.map(c=>c.subject))).filter(Boolean);
+      const difficulties = Array.from(new Set(courses.map(c=>c.difficulty))).filter(Boolean);
+
+      async function handleDownload(course, resource){
+        try{
+          const token = localStorage.getItem('token');
+          if (!token){ alert('Please login to download and record downloads.'); return; }
+          // call backend to record download
+          const res = await fetch('http://localhost:4000/api/downloads', {
+            method: 'POST', headers: {'Content-Type':'application/json','Authorization':'Bearer '+token},
+            body: JSON.stringify({ courseId: course._id, resourceTitle: resource.title, resourceUrl: resource.url })
+          });
+          if (!res.ok){
+            const err = await res.json();
+            alert(err.error || 'Download failed');
+            return;
+          }
+          // update client-side count quickly
+          setCourses(prev => prev.map(p => p._id===course._id ? {...p, downloads:(p.downloads||0)+1} : p));
+        }catch(err){ console.error(err); alert('Download error'); }
+      }
+
+      return (
+        <div>
+          <FilterPanel subjects={subjects} difficulties={difficulties} filters={filters} setFilters={setFilters} />
+          <div className="grid" style={{marginTop:16}}>
+            {filtered.map(c=> <CourseCard key={c._id} course={c} onDownload={handleDownload} />)}
+            {filtered.length===0 && <div style={{color:'var(--muted)'}}>No courses match your filters.</div>}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('app-root')).render(<Dashboard />);
+    </script>
+
+  </body>
+</html>
