@@ -226,32 +226,59 @@ function getTimeAgo(date) {
 // @access  Private
 router.get('/events', asyncHandler(async (req, res) => {
   const coordinatorId = req.user._id;
-  const { status, category, page = 1, limit = 10 } = req.query;
+  const { status, category, page = 1, limit = 10, forRegistration } = req.query;
 
-  const query = { coordinatorId };
+  console.log('🎯 Coordinator /events called - category:', category, 'forRegistration:', forRegistration);
+
+  // If fetching for registration purposes, don't filter by coordinator - show all active events
+  const query = forRegistration === 'true' ? { isActive: true } : { coordinatorId };
   
   if (status) query.status = status;
-  if (category) query.category = category;
+  if (category && category !== 'both') query.category = category;
+
+  console.log('🔍 Query:', JSON.stringify(query));
 
   const events = await Event.find(query)
-    .sort({ createdAt: -1 })
+    .select('_id title description category eventDate venue maxParticipants currentParticipants status isActive')
+    .sort({ category: 1, title: 1 })
     .skip((page - 1) * limit)
-    .limit(parseInt(limit))
-    .populate('coordinatorId', 'firstName lastName');
+    .limit(parseInt(limit));
 
   const total = await Event.countDocuments(query);
 
-  res.status(200).json({
-    success: true,
-    data: {
-      events,
-      pagination: {
-        current: parseInt(page),
-        pages: Math.ceil(total / limit),
-        total
+  console.log('✅ Found', events.length, 'events');
+
+  // Return events at root level for registration, nested for dashboard
+  if (forRegistration === 'true') {
+    res.status(200).json({
+      success: true,
+      count: events.length,
+      events: events.map(event => ({
+        _id: event._id,
+        eventId: event._id,
+        title: event.title,
+        description: event.description,
+        category: event.category,
+        eventDate: event.eventDate,
+        venue: event.venue,
+        maxParticipants: event.maxParticipants,
+        currentParticipants: event.currentParticipants,
+        availableSlots: event.maxParticipants - event.currentParticipants
+      }))
+    });
+  } else {
+    res.status(200).json({
+      success: true,
+      data: {
+        events,
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total
+        }
       }
-    }
-  });
+    });
+  }
 }));
 
 // @desc    Create new event

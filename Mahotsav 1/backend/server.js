@@ -138,9 +138,11 @@ const paymentRoutes = require('./routes/payments');
 const participantsRoutes = require('./routes/participants');
 const registrationsRoutes = require('./routes/registrations');
 const teamRegistrationRoutes = require('./routes/teamRegistration');
+const eventsRoutes = require('./routes/events');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/coordinator', coordinatorRoutes);
+app.use('/api/coordinator', eventsRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/participants', participantsRoutes);
 app.use('/api/registrations', registrationsRoutes);

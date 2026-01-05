@@ -141,6 +141,14 @@ const CoordinatorDashboard: React.FC = () => {
   const [teamSearchQuery, setTeamSearchQuery] = useState<string>('');
   const [showTeamCreation, setShowTeamCreation] = useState<boolean>(false);
   
+  // Event registration modal states
+  const [showEventModal, setShowEventModal] = useState<boolean>(false);
+  const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
+  const [availableEvents, setAvailableEvents] = useState<any[]>([]);
+  const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState<boolean>(false);
+  const [registeringEvents, setRegisteringEvents] = useState<boolean>(false);
+  
   // Toast notification state
   const [toast, setToast] = useState<{show: boolean; message: string; type: 'success' | 'error'}>({
     show: false,
@@ -807,6 +815,209 @@ const CoordinatorDashboard: React.FC = () => {
     }
   };
 
+  // Open event registration modal
+  const openEventRegistrationModal = async (participant: Participant) => {
+    console.log('🔍 Opening event modal for participant:', participant);
+    setSelectedParticipant(participant);
+    setShowEventModal(true);
+    setLoadingEvents(true);
+
+    try {
+      const token = localStorage.getItem('authToken');
+      const participantId = getParticipantId(participant);
+      const userType = participantTypes[participantId] || participant.userType || participant.participationType;
+      
+      console.log('📋 Participant ID:', participantId);
+      console.log('📋 User Type:', userType);
+      console.log('📋 participantTypes:', participantTypes);
+      
+      // Determine category based on user type
+      let category = '';
+      if (userType === 'sports') {
+        category = 'sports';
+      } else if (userType === 'cultural') {
+        category = 'cultural';
+      } else if (userType === 'both') {
+        category = 'both';
+      }
+
+      console.log('🎯 Category to fetch:', category);
+
+      const url = category 
+        ? `http://localhost:5000/api/coordinator/events?category=${category}&forRegistration=true&limit=1000`
+        : 'http://localhost:5000/api/coordinator/events?forRegistration=true&limit=1000';
+
+      console.log('🌐 Fetching from URL:', url);
+
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log('📡 Response status:', response.status);
+      const data = await response.json();
+      console.log('📦 Full Response data:', JSON.stringify(data, null, 2));
+      
+      // The backend now returns events at root level when forRegistration=true
+      const events = data.events || [];
+      console.log('📦 Extracted events length:', events.length);
+      if (events.length > 0) {
+        console.log('📦 First event sample:', events[0]);
+      }
+
+      if (response.ok && data.success) {
+        console.log('✅ Events loaded:', events.length);
+        
+        // Filter events by gender
+        const participantGender = (participantGenders[participantId] || participant.gender || 'male').toLowerCase();
+        console.log('👤 Participant gender:', participantGender);
+        
+        const filteredEvents = events.filter((event: any) => {
+          const eventTitle = (event.title || '').toLowerCase();
+          const eventDescription = (event.description || '').toLowerCase();
+          const eventText = eventTitle + ' ' + eventDescription;
+          
+          // Check if event is gender-specific
+          const isMaleEvent = eventText.includes('men') || eventText.includes('male') || eventText.includes("men's") || eventText.includes('boys');
+          const isFemaleEvent = eventText.includes('women') || eventText.includes('female') || eventText.includes("women's") || eventText.includes('girls');
+          
+          // If event has no gender specification, show to all
+          if (!isMaleEvent && !isFemaleEvent) {
+            return true;
+          }
+          
+          // If participant is male, show only male events and non-gender-specific events
+          if (participantGender === 'male' && isMaleEvent && !isFemaleEvent) {
+            return true;
+          }
+          
+          // If participant is female, show only female events and non-gender-specific events
+          if (participantGender === 'female' && isFemaleEvent && !isMaleEvent) {
+            return true;
+          }
+          
+          return false;
+        });
+        
+        console.log('🎯 Filtered events by gender:', filteredEvents.length);
+        setAvailableEvents(filteredEvents);
+        setLoadingEvents(false);
+        
+        // Pre-select events if participant already has registered events
+        if (participant.registeredEvents && Array.isArray(participant.registeredEvents)) {
+          const registeredEventIds = participant.registeredEvents
+            .map((re: any) => re.eventId || re._id)
+            .filter((id: any) => id);
+          console.log('🔖 Pre-selecting registered events:', registeredEventIds);
+          setSelectedEventIds(registeredEventIds);
+        } else if (participant.eventNames && participant.eventNames.length > 0) {
+          // Try to match by event names
+          const matchedEventIds = filteredEvents
+            .filter((event: any) => participant.eventNames?.includes(event.title))
+            .map((event: any) => event._id);
+          console.log('🔖 Pre-selecting by name match:', matchedEventIds);
+          setSelectedEventIds(matchedEventIds);
+        } else {
+          setSelectedEventIds([]);
+        }
+      } else {
+        console.error('❌ Failed to load events:', data.message);
+        showToast(data.message || 'Failed to load events', 'error');
+        setAvailableEvents([]);
+        setSelectedEventIds([]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching events:', error);
+      showToast('Network error while loading events', 'error');
+      setAvailableEvents([]);
+      setSelectedEventIds([]);
+    } finally {
+      setLoadingEvents(false);
+    }
+  };
+
+  // Close event registration modal
+  const closeEventRegistrationModal = () => {
+    setShowEventModal(false);
+    setSelectedParticipant(null);
+    setAvailableEvents([]);
+    setSelectedEventIds([]);
+  };
+
+  // Toggle event selection
+  const toggleEventSelection = (eventId: string) => {
+    setSelectedEventIds(prev => {
+      if (prev.includes(eventId)) {
+        return prev.filter(id => id !== eventId);
+      } else {
+        return [...prev, eventId];
+      }
+    });
+  };
+
+  // Register participant for selected events
+  const registerForEvents = async () => {
+    if (!selectedParticipant || selectedEventIds.length === 0) {
+      showToast('Please select at least one event', 'error');
+      return;
+    }
+
+    setRegisteringEvents(true);
+
+    try {
+      const token = localStorage.getItem('authToken');
+      const participantId = getParticipantId(selectedParticipant);
+
+      const response = await fetch('http://localhost:5000/api/coordinator/events/register', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: participantId,
+          eventIds: selectedEventIds
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        showToast(`Successfully registered for ${data.registeredCount} event(s)!`, 'success');
+        
+        // Update the participant in the unpaidParticipants list
+        setUnpaidParticipants(prev => 
+          prev.map(p => {
+            if (getParticipantId(p) === participantId) {
+              return {
+                ...p,
+                eventNames: data.eventNames || [],
+                registeredEvents: data.allRegisteredEvents || [],
+                event: data.eventNames && data.eventNames.length > 0 ? data.eventNames[0] : p.event
+              };
+            }
+            return p;
+          })
+        );
+
+        // Close modal
+        closeEventRegistrationModal();
+        
+        // Refresh the unpaid participants list
+        fetchUnpaidParticipants();
+      } else {
+        showToast(data.message || 'Failed to register for events', 'error');
+      }
+    } catch (error) {
+      console.error('Error registering for events:', error);
+      showToast('Network error while registering for events', 'error');
+    } finally {
+      setRegisteringEvents(false);
+    }
+  };
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const processPayment = async () => {
     if (!searchedParticipant) return;
@@ -1286,17 +1497,52 @@ const CoordinatorDashboard: React.FC = () => {
                     </span>
                     <span className="event-name">
                       {participant.eventNames && participant.eventNames.length > 0 ? (
-                        <select className="event-dropdown" defaultValue={participant.eventNames[0]}>
-                          {participant.eventNames.map((eventName: string, idx: number) => (
-                            <option key={idx} value={eventName}>
-                              {eventName}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="event-registration-display">
+                          <select className="event-dropdown" defaultValue={participant.eventNames[0]}>
+                            {participant.eventNames.map((eventName: string, idx: number) => (
+                              <option key={idx} value={eventName}>
+                                {eventName}
+                              </option>
+                            ))}
+                          </select>
+                          <button 
+                            className="edit-registration-btn"
+                            onClick={() => openEventRegistrationModal(participant)}
+                            title="Click to edit event registrations"
+                          >
+                            ✏️ Edit
+                          </button>
+                        </div>
                       ) : typeof participant.event === 'object' && participant.event?.title ? (
-                        participant.event.title
+                        <div className="event-registration-display">
+                          <span>{participant.event.title}</span>
+                          <button 
+                            className="edit-registration-btn"
+                            onClick={() => openEventRegistrationModal(participant)}
+                            title="Click to edit event registrations"
+                          >
+                            ✏️ Edit
+                          </button>
+                        </div>
+                      ) : participant.event && participant.event !== 'No Events Registered' && !participant.event.includes('none') ? (
+                        <div className="event-registration-display">
+                          <span>{participant.event}</span>
+                          <button 
+                            className="edit-registration-btn"
+                            onClick={() => openEventRegistrationModal(participant)}
+                            title="Click to edit event registrations"
+                          >
+                            ✏️ Edit
+                          </button>
+                        </div>
                       ) : (
-                        participant.event || 'No Events Registered'
+                        <button 
+                          className="add-registration-btn"
+                          onClick={() => openEventRegistrationModal(participant)}
+                          title="Click to register for events"
+                        >
+                          + Add Registration
+                        </button>
                       )}
                     </span>
                     <span className="phone">{participant.phoneNumber}</span>
@@ -1602,6 +1848,90 @@ const CoordinatorDashboard: React.FC = () => {
               {toast.type === 'success' ? '✅' : '❌'}
             </span>
             <span className="toast-message">{toast.message}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Event Registration Modal */}
+      {showEventModal && (
+        <div className="modal-overlay" onClick={closeEventRegistrationModal}>
+          <div className="event-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>📝 Register for Events</h2>
+              <button className="modal-close-btn" onClick={closeEventRegistrationModal}>✕</button>
+            </div>
+            
+            <div className="modal-body">
+              {selectedParticipant && (
+                <div className="participant-info">
+                  <p><strong>Participant:</strong> {selectedParticipant.name}</p>
+                  <p><strong>ID:</strong> {getParticipantId(selectedParticipant)}</p>
+                  <p><strong>Type:</strong> {participantTypes[getParticipantId(selectedParticipant)] || selectedParticipant.userType || selectedParticipant.participationType || 'N/A'}</p>
+                </div>
+              )}
+
+              {loadingEvents ? (
+                <div className="loading-events">
+                  <p>⏳ Loading events...</p>
+                </div>
+              ) : availableEvents.length > 0 ? (
+                <div className="events-checklist">
+                  <h3>Select Events to Register:</h3>
+                  <div className="events-list">
+                    {availableEvents.map((event) => (
+                      <div key={event._id} className="event-item">
+                        <label className="event-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={selectedEventIds.includes(event._id)}
+                            onChange={() => toggleEventSelection(event._id)}
+                            className="event-checkbox"
+                          />
+                          <div className="event-details">
+                            <div className="event-title">{event.title}</div>
+                            <div className="event-meta">
+                              <span className={`event-category ${event.category}`}>
+                                {event.category}
+                              </span>
+                              <span className="event-date">
+                                {new Date(event.eventDate).toLocaleDateString()}
+                              </span>
+                              <span className="event-venue">{event.venue}</span>
+                            </div>
+                            {event.availableSlots !== undefined && (
+                              <div className="event-slots">
+                                Available: {event.availableSlots} / {event.maxParticipants}
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="no-events">
+                  <p>No events available for registration</p>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button 
+                className="btn-cancel" 
+                onClick={closeEventRegistrationModal}
+                disabled={registeringEvents}
+              >
+                Cancel
+              </button>
+              <button 
+                className="btn-register" 
+                onClick={registerForEvents}
+                disabled={registeringEvents || selectedEventIds.length === 0}
+              >
+                {registeringEvents ? '⏳ Registering...' : `Register (${selectedEventIds.length})`}
+              </button>
+            </div>
           </div>
         </div>
       )}
